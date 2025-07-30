@@ -1,20 +1,19 @@
 from datetime import datetime
 import speech_recognition as sr
-import pyttsx3
 import webbrowser
 import wikipedia
 import wolframalpha
 import music as ms
 import sounddevice as sd
-import numpy as np
 import time
 from kokoro import KPipeline
-from queue import Queue
+import numpy as np
+from scipy.signal import resample_poly
 import threading
 import time
 import calendarGoogle
 import os 
-pipeline = KPipeline(lang_code='a')
+pipeline = KPipeline(lang_code='b')
 
 
 # Speech engine initialization
@@ -39,9 +38,6 @@ with open(WOLFRAM_KEY_PATH, "r") as f:
 
 wolframClient = wolframalpha.Client(web_id)
 
-stop_speaking = False
-speech_thread = None
-is_speaking = False
 
 def listOrDict(var):
     if isinstance(var, list):
@@ -49,39 +45,31 @@ def listOrDict(var):
     return var['plaintext']
 
 
-def speak(text): 
-    # engine.setProperty('rate', rate)
-    # engine.say(text)
-    # engine.runAndWait()
-    global stop_speaking, speech_thread, is_speaking
-    stop_speaking = True
-    if speech_thread and speech_thread.is_alive():
-        speech_thread.join() 
-    stop_speaking = False
-
-    def _threaded_speaking():
-        global is_speaking
-        is_speaking = True
+#Advanced speak
+def speak(text):
+        def resample(audio):
+            device_info = sd.query_devices(2, 'output')
+            target_sr = int(device_info['default_samplerate'])
+            original_sr = 24000
+            gcd = np.gcd(original_sr, target_sr)
+            up = target_sr // gcd
+            down = original_sr // gcd
+            return resample_poly(audio, up, down)
         generator = pipeline(text, voice='bm_lewis')
+
         try:
             for i, (gs, ps, audio) in enumerate(generator):
-                if stop_speaking:
-                    break
-                sd.play(audio, samplerate=24050)
+                sd.play(resample(audio), samplerate=24000)
                 sd.wait()
         except Exception as e:
             if "PortAudio" not in str(e):  # Only show non-audio errors
                 print(f"Error: {e}")
         finally:
-            if is_speaking:
-                sd.stop()
-                is_speaking = False
+            sd.stop()
+                
+            
 
-    speech_thread = threading.Thread(target=_threaded_speaking)
-    speech_thread.daemon = True
-    speech_thread.start()
-
-
+#Basic_Speak
 
 
 
@@ -140,29 +128,15 @@ def get_listening_result():
             print(f"Heard: {query}")
             return query
         except Exception as e:
-            print(e)
-            return 'None'
+            print(f"Error: {e}")
+            return None
     return query
 
 def parseCommand():
-    global is_speaking, stop_speaking
-    auth_command = get_listening_result()
-    
-    if auth_command == "jarvis":
-        if is_speaking:
-            stop_speaking = True
-            is_speaking = False
-            sd.stop()
-            speak("Yes Sir?")
-        else:
-            speak("Listening, Sir")
-        time.sleep(0.5)
-        command = get_listening_result()
-        if not command:
-            return None
-        return command
-    else:
+    command = get_listening_result()
+    if not command:
         return None
+    return command
 
 
 
@@ -170,7 +144,6 @@ def parseCommand():
 def main():
     global is_speaking
     speak("Hello!")
-    time.sleep(2)
     while True:
         # Parse as list
         query = parseCommand()
@@ -178,12 +151,9 @@ def main():
             continue
 
         query = query.lower().split()
-        if query == "interrupt":
-            continue
 
         if(activation_word == query[0] and len(query) > 1):
             query.pop(0)
-        
             #List commands
             if query[0] == 'say':
                 if 'hello' in query:
@@ -194,7 +164,6 @@ def main():
                     speak(speech)
             if query[0] == 'off':
                 speak("With Pleasure")
-                time.sleep(2)
                 break
 
             #Navigation:
@@ -276,5 +245,3 @@ main()
 
 
                 
-
-

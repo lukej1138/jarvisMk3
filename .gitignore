@@ -5,3 +5,4 @@ googleToken.json
 wolfram-keys.txt
 jarenv/
 testing_files/
+__pycache__/
