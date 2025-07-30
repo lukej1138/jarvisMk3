@@ -1,6 +1,5 @@
 import speech_recognition as sr
 import sounddevice as sd
-import threading
 from kokoro import KPipeline
 from datetime import datetime
 import numpy as np
@@ -11,7 +10,7 @@ import wikipedia
 import wolframalpha
 import time
 import calendarGoogle
-import os 
+import os
 import music as ms
 class AI():
     skills = []
@@ -76,12 +75,8 @@ class AI():
                     self.m = sr.Microphone(device_index=index)
                     break
             
-
-
-
+        self.r.energy_threshold = 2000 
         self.r.dynamic_energy_threshold = True
-        with self.m as source:
-            self.r.adjust_for_ambient_noise(source)
         
     @property
     def name(self):
@@ -179,14 +174,14 @@ class AI():
     
     def get_listening_result(self):
         with self.m as src:
+            self.r.adjust_for_ambient_noise(src)
             try:
                 print("Listening")
-                base_speech = self.r.listen(src, timeout=10) #recorded input
+                base_speech = self.r.listen(src) #recorded input
                 query = self.r.recognize_google(base_speech, language="en_us").lower() #processed input
                 print(f"Heard: {query}")
                 return query
             except Exception as e:
-                print(f"Error: {e}")
                 return None
         return query
     
@@ -199,21 +194,16 @@ class AI():
                 continue
 
             query = query.split()
-            print(query)
 
             if(self.__name == query[0] and len(query) > 1):
                 query.pop(0)
                 #List commands
-                print(query)
                 if query[0] == 'say':
-                    if 'it' in query:
-                        self.speak("Good Boy")
-                    else:
-                        query.pop(0)
-                        speech = ' '.join(query)
-                        self.speak(speech)
+                    query.pop(0)
+                    speech = ' '.join(query)
+                    self.speak(speech)
                 elif query[0] == 'off':
-                    self.speak("With Pleasure")
+                    self.speak("Shutting Down")
                     break
 
                 #Navigation:
