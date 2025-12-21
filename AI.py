@@ -2,18 +2,19 @@ import speech_recognition as sr
 import sounddevice as sd
 from kokoro import KPipeline
 from datetime import datetime
-import numpy as np
-from scipy.signal import resample_poly
 import pyttsx3
 import webbrowser
 import wikipedia
-import wolframalpha
-import time
-import calendarGoogle
+import requests
+from GoogleAPI.calendarGoogle import CalendarGoogle
 import os
 import music as ms
+import ModelStorage.Classifier as Classifier
+from dotenv import load_dotenv
+
+load_dotenv()
+
 class AI():
-    skills = []
     voices = [
     "af_heart",
     "af_alloy",
@@ -36,18 +37,10 @@ class AI():
     "am_puck",
     "am_santa"
 ]
-    #Configure Browser
-    #Set The Path
-    chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    webbrowser.register('chrome', None, webbrowser.BackgroundBrowser(chrome_path))
-    WOLFRAM_KEY_PATH = "wolfram-keys.txt"
 
     #WolframAlpha
-    web_id = ""
-    with open(WOLFRAM_KEY_PATH, "r") as f:
-        web_id = f.readline().strip()
+    web_id = os.getenv("WOLFRAM_KEY")
 
-    wolframClient = wolframalpha.Client(web_id)
     #Want to have different models depending on if the user wants an advanced version or not; so if they want the advanced version, we should use the advanced_speak, otherwise use baseline
 
     def __init__(self, advanced_tts=True, name=None, mic_name=""):
@@ -66,6 +59,7 @@ class AI():
             self.__engine.setProperty('voice', self.__voice)
         
         self.r = sr.Recognizer()
+        self.r.pause_threshold = 1.5
         self.m = sr.Microphone()
 
         if mic_name != "":
@@ -77,6 +71,7 @@ class AI():
             
         self.r.energy_threshold = 2000 
         self.r.dynamic_energy_threshold = True
+        self.__classifier = Classifier.Classifier("jarvis")
         
     @property
     def name(self):
@@ -121,47 +116,28 @@ class AI():
         if (self.__advanced_tts and value in self.voices):
             self.__voice = value
         elif self.__advanced_tts:
-            raise ValueError("Must choose a proper voice from American English (voices that start with with 'a') Selection in Kokoro")
+            raise ValueError(f"Must choose a proper voice from American English (voices that start with with 'a') Selection in Kokoro. Voice options: {AI.voices}")
         elif value in self.__engine.getProperty('voices'):
             self.__voice = value
             self.__engine.setProperty('voice', self.__voice)
         else:
             raise ValueError(f"Chosen voice must be a pyttsx3 voice. List of possible voices: {self.__engine.getProperty('voices')}")
 
-    @staticmethod
-    def listOrDict(var):
-        if isinstance(var, list):
-            return var[0]['plaintext']
-        return var['plaintext']
-
-    @staticmethod
-    def search_wiki(self, query = ''):
-        searchResults = wikipedia.search(query)
-        if not searchResults:
-            print("No wikipedia results")
-            return "No Results Detected"
-        try:
-            wikiPage = wikipedia.page(searchResults[0])
-        except wikipedia.DisambiguationError as e:
-            wikiPage = wikipedia.page(e.options[0])
-        print(wikiPage.title)
-        wikiSummary = str(wikiPage.summary)
-        return wikiSummary
 
     def speak(self, text):
         if self.__advanced_tts:
-            target_sr = int(self.m.SAMPLE_RATE)
-            def resample(audio):
-                original_sr = 24000
-                gcd = np.gcd(original_sr, target_sr)
-                up = target_sr // gcd
-                down = original_sr // gcd
-                return resample_poly(audio, up, down)
+            target_sr = int(sd.query_devices(sd.default.device[1], 'output')['default_samplerate'])
+            # def resample(audio):
+            #     original_sr = 24000
+            #     gcd = np.gcd(original_sr, target_sr)
+            #     up = target_sr // gcd
+            #     down = original_sr // gcd
+            #     return resample_poly(audio, up, down)
              
             generator = self.__engine(text, voice=self.__voice)
             try:
                 for i, (gs, ps, audio) in enumerate(generator):
-                    sd.play(resample(audio), samplerate=target_sr)
+                    sd.play(audio, samplerate=24000)
                     sd.wait()
             except Exception as e:
                 if "PortAudio" not in str(e):  # Only show non-audio errors
@@ -184,6 +160,10 @@ class AI():
             except Exception as e:
                 return None
         return query
+    def contact_server(self, query):
+        url = "http://localhost:8080/classify"
+        response = requests.post(url, json={"query": query})
+        return response.json()
     
     def run(self):
         self.speak(f"Hey, I'm {self.__name}, you're virtual assistant! Just say my name and ask for a command, and I'll see what I can do.")
@@ -197,121 +177,143 @@ class AI():
 
             if(self.__name == query[0] and len(query) > 1):
                 query.pop(0)
-                #List commands
+                #Basic commands
                 if query[0] == 'say':
                     query.pop(0)
                     speech = ' '.join(query)
                     self.speak(speech)
+                    continue
                 elif query[0] == 'off':
                     self.speak("Shutting Down")
                     break
+                    
+                request = self.contact_server(" ".join(query))
+                if request["request"] == "UNKNOWN":
+                    self.speak("Sorry, I didn't understand your command.")
 
                 #Navigation:
-                elif query[0] == 'go' and query[1] == 'to':
-                    self.speak('Opening...')
-                    query = ' '.join(query[2:])
+                elif request["request"] == "WEBSITE-ACCESS":
+                    self.speak('Attempting to Open...')
+                    query = request["websitename"]
+                    if "https://" not in query:
+                        query = "https://" + query
                     if '.' not in query:
                         query = query + ".com"
-                    webbrowser.get().open_new(query)
+                    print(webbrowser.open_new(query))
 
                 #Wikipedia
-                elif query[0] == 'look' and query[1] == 'up':
-                    query.pop(0)
-                    query = ' '.join(query)
+                elif request["request"] == "WIKIPEDIA":
                     self.speak("Loading Data... Processing...")
-                    self.speak(AI.search_wiki(query))
+                    self.speak(AI.search_wiki(request["query"]))
 
                 #WolframAlpha
-                elif query[0] == 'compute' or query[0] == 'calculate':
-                    query = ' '.join(query[1:])
-                    self.speak("computing")
+                elif request["request"] == "WOLFRAMALPHA":
+                    self.speak("attempting calculations...")
                     try:
-                        result = self.search_wolframalpha(query)
+                        result = self.search_wolframalpha(request["query"])
                         self.speak(result)
                     except:
-                        self.speak("Unable to Compute")
+                        self.speak("failed to compute")
 
                 #Note taking
-                elif ' '.join(query[:3]) == "create new log":
+                elif request["request"] == "NOTE-TAKING":
                     self.speak("Ready to log")
                     newNote = self.get_listening_result().lower()
                     curr_time = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
 
-                    with open('note_%s.txt' % curr_time, 'w') as newFile:
+                    with open(f'note_{curr_time}.txt', 'w') as newFile:
                         newFile.write(newNote)
                     self.speak("Note has been written")
                 
                 #Music Player:
-                elif "play" in query[:3]:
-                    if "by" in query:
-                        self.speak(f"Attempting to play {" ".join(query[query.index("play")+1:query.index("by")])} by {" ".join(query[query.index("by")+1:])}")
-                        if not ms.search_and_play_spotify(" ".join(query[query.index("play")+1:query.index("by")]), " ".join(query[query.index("by")+1:])):
+                elif request["request"] == "MUSIC-PLAY":
+                    if request["artistname"] != "unknown":
+                        self.speak(f"Attempting to play {request["songname"]} by {request["artistname"]}")
+                        if not ms.search_and_play_spotify(request["songname"],request["artistname"]):
                             self.speak("Sorry, I couldn't find that song. Could you try repeating your command?")
                     else:
-                        self.speak(f"Playing {" ".join(query[query.index("play")+1:])}")
-                        if not ms.search_and_play_spotify(" ".join(query[query.index("play")+1:])):
+                        self.speak(f"Playing {request["songname"]}")
+                        if not ms.search_and_play_spotify(request["songname"]):
                             self.speak("Sorry, I couldn't find that song. Could you try repeating your command?")
                 
-                elif "resume" in query:
+                elif request["request"] == "MUSIC-RESUME":
                     result = ms.resume()
                     if not result:
-                        self.speak("Music is already playing, sir")
+                        self.speak("Music is already playing.")
                     else:
                         self.speak("Playback started")
                 
-                elif ("pause" in query or "off" in query) and "music" in query:
+                elif request["request"] == "MUSIC-PAUSE":
                     result = ms.pause()
                     if not result:
-                        self.speak("Music is already off, sir")
+                        self.speak("Music is already off.")
                     
-
-
                 #Scheduler
-                elif "schedule" in query or "calendar" in query:
-                    if query[0] == "remove":
-                        calendarGoogle.remove(query[1:query.index("from")])
-                    elif query[0] == "add":
-                        start, end, date, name = calendarGoogle.parseEvent(" ".join(query[1:]))
-                        if start == "No Break":
-                            self.speak("Please use the work 'break' when adding to the calendar")
-                        elif not start or not end or not date or not name:
+                elif "CALENDAR" in request["request"]:
+                    if request["request"] == "CALENDAR-REMOVE":
+                        CalendarGoogle().remove(request["name"])
+                    else:
+                        start, end, date, name = CalendarGoogle().parseEvent(request)
+                        if not start or not end or not date or not name:
                             self.speak("Could not add to calendar; please try again")
-                        else: 
+                        else:
                             self.speak(f"Adding {name} to your schedule, sir")
-                            calendarGoogle.add(start, end, date, name)
+                            CalendarGoogle().add(start, end, date, name)
         os._exit(0)
-    
-    def search_wolframalpha(self, query=''):
-        response = self.wolframClient.query(query)
+    def search_wiki(self, query = ''):
+        try:
+            searchResults = wikipedia.search(query)
+        except Exception as e:
+            print(self.speak("Sorry, there was an error processing the wiki request."))
+            print(e)
+
+        if not searchResults:
+            print("No wikipedia results")
+            return "No Results Detected"
+        try:
+            wikiPage = wikipedia.page(searchResults[0])
+        except wikipedia.DisambiguationError as e:
+            wikiPage = wikipedia.page(e.options[0])
+        print(wikiPage.title)
+        wikiSummary = str(wikiPage.summary)
+        return wikiSummary
+
+    def search_wolframalpha(self, query):
         #@success: wolfram could resolve query
         #@numpods: number of results returned
         #pod: List of results. can contain subpods.
-        if response['@success'] == 'false':
+        url = f"http://api.wolframalpha.com/v2/query"
+
+        params = {
+        "input"  : query,
+        "appid" : self.web_id,
+        "output" : "json"
+        }
+
+        initial_response = requests.get(url=url, params=params)
+        response = initial_response.json()['queryresult']
+        if not response['success']:
             return 'Could not compute'
-        
         #query resolved
         result = ''
-        
-        #question
-        pod0 = response['pod'][0]
+        pod0 = response['pods'][0]
 
-        pod1 = response['pod'][1]
-        # May contain the answer, highest confidence
-        #If has title of result or definition or is primary, then its official result
-        if(('result') in pod1['@title'].lower() or (pod1.get('@primary', 'false') == 'true') or ('definition' in pod1['@title'].lower())):
-            #Get the result:
-            result = AI.listOrDict(pod1['subpod'])
-            # remove the bracketed
-            return result.split('(')[0]
-        else:
-            question = AI.listOrDict(pod0['subpod'])
-            #try out wikipedia
-            self.speak("Computation Failed; trying wikipedia.")
-            return self.search_wiki(question)
+        for i in range(1, len(response['pods'])):
+            pod = response['pods'][i]
+            if pod['id'].lower() == 'result' or pod['id'].lower() == 'decimalapproximation':
+                result = pod['subpods'][0]['plaintext']
+                # remove the bracketed
+                if pod['id'] == 'DecimalApproximation':
+                    dot = result.index(".")
+                    result = "Approximately " + result[:dot] + " point " + "-".join(str(result[dot+1:dot+6]))
+                return result
+
+        self.speak("Computation Failed; trying wikipedia.")
+        return self.search_wiki(pod0['subpods'][0]['plaintext'])
+
 
 def main():
-    friday = AI(name="Friday", advanced_tts=True, mic_name="cmteck")
+    friday = AI(name="Friday", advanced_tts=True)
     friday.run()
-
 
 main()

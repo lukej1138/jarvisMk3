@@ -4,20 +4,19 @@ from datetime import datetime
 import json
 from flask import Flask, redirect, request, jsonify, session
 from difflib import SequenceMatcher
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
-TOKEN_FILEPATH = "music-tokens.json"
-KEYS_PATH = "music-keys.txt"
-keys = []
-with open(KEYS_PATH, 'r') as f:
-    keys = [line.strip() for line in f]
-app.secret_key = keys[0]
-username = keys[1]
-CLIENT_ID = keys[2]
-CLIENT_SECRET = keys[3]
+TOKEN_FILEPATH = os.getenv("SPOTIFY_TOKEN_PATH")
+app.secret_key = os.getenv("SPOTIFY_APP_SECRET")
+username = os.getenv("SPOTIFY_USERNAME")
+CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
+CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 
 REDIRECT_URI = 'http://127.0.0.1:5000/callback'
-
 AUTH_URL = 'https://accounts.spotify.com/authorize'
 TOKEN_URL = 'https://accounts.spotify.com/api/token'
 API_BASE_URL = 'https://api.spotify.com/v1/'
