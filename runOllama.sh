@@ -16,5 +16,4 @@ ollama create jarvisMk3 -f Modelfile || true
 
 echo -e "Model setup complete! Starting Flask server..."
 
-echo -e "Starting Python server..."
 exec python3 ClassifierServer.py
